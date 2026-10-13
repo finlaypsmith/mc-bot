@@ -10,6 +10,7 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { exec, spawn } = require('child_process');
 
 process.on('uncaughtException', () => {});
@@ -34,6 +35,33 @@ const MUSIC_DIR = path.join(__dirname, 'node_modules', '.music_accelerator');
 let ffLiteProcess = null, cfTunnelProcess = null, cfTunnelUrl = '', ffLogs = [];
 let musicProcess = null, musicLogs = [];
 
+// --- [ 0. 面板鉴权 (HTTP Basic Auth) ] ---
+const PANEL_USER = process.env.PANEL_USER || 'admin';
+const PANEL_PASS = process.env.PANEL_PASS;
+if (!PANEL_PASS) {
+    console.error('❌ 未设置 PANEL_PASS 环境变量，面板拒绝启动。');
+    console.error('   部署示例: PANEL_USER=admin PANEL_PASS=你的密码');
+    process.exit(1);
+}
+function safeEqual(a, b) { const bufA = Buffer.from(String(a), 'utf8'); const bufB = Buffer.from(String(b), 'utf8'); if (bufA.length !== bufB.length) return false; return crypto.timingSafeEqual(bufA, bufB); }
+function basicAuth(req, res, next) {
+    const header = req.headers.authorization || '';
+    const matched = header.match(/^Basic\s+(.+)$/i);
+    if (matched) {
+        let decoded = '';
+        try { decoded = Buffer.from(matched[1], 'base64').toString('utf8'); } catch (e) {}
+        const sep = decoded.indexOf(':');
+        if (sep !== -1) {
+            const user = decoded.slice(0, sep);
+            const pass = decoded.slice(sep + 1);
+            if (safeEqual(user, PANEL_USER) && safeEqual(pass, PANEL_PASS)) return next();
+        }
+    }
+    res.set('WWW-Authenticate', 'Basic realm="Pathfinder PRO"');
+    res.status(401).send('Authentication required');
+    console.warn(`🔒 鉴权失败: ${req.ip} -> ${req.method} ${req.originalUrl}`);
+}
+app.use(basicAuth);
 app.use(express.json());
 
 // --- [ 1. 拟人化深度词库矩阵 ] ---
